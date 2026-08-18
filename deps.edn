@@ -5,6 +5,7 @@
  {module/core      {:local/root "module-core"}
   module/core-dev  {:local/root "module-core-dev"}
   module/core-auth {:local/root "module-core-auth"}
+  module/core-auth-server {:local/root "module-core-auth-server"}
   ;; --- Java JSON dependency (uncomment ONLY one) ---
   module/json-charred   {:local/root "module-core-json-charred"}
   ;module/json-cheshire  {:local/root "module-core-json-cheshire"}
