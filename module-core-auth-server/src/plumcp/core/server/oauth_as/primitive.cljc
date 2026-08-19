@@ -14,8 +14,7 @@
   IdP, or the caller's identity model, so this file changes rarely and can be
   reviewed as-is."
   (:require
-   [plumcp.core.util.http-auth :as uha]
-   [plumcp.core.util.async-bridge :as uab])
+   [plumcp.core.server.oauth-as.internal :as internal])
   #?(:clj (:import
            [java.security MessageDigest]
            [java.util Base64])))
@@ -32,7 +31,7 @@
   refresh tokens — every one of them needs to be unguessable, and none of
   them carry structured meaning at the client."
   []
-  (uha/make-code-verifier))
+  (internal/make-code-verifier))
 
 
 ;; ---------------------------------------------------------------------------
@@ -62,7 +61,7 @@
   for tests, for a plumcp-based MCP client, and for anyone building tooling
   against the endpoint."
   [code-verifier]
-  (uha/with-code-challenge* code-verifier identity))
+  (internal/with-code-challenge* code-verifier identity))
 
 
 (defn pkce-verify?
@@ -81,16 +80,18 @@
    (if (or (not (string? code-verifier)) (empty? code-verifier)
            (not (string? code-challenge)) (empty? code-challenge))
      false
-     (uha/with-code-challenge* code-verifier
+     (internal/with-code-challenge* code-verifier
        (fn [computed] (constant-time-eq? computed code-challenge)))))
   ([code-verifier code-challenge f]
    ;; CLJS-friendly explicit-callback shape
    (if (or (not (string? code-verifier)) (empty? code-verifier)
            (not (string? code-challenge)) (empty? code-challenge))
      (f false)
-     (uab/let-await [result (uha/with-code-challenge* code-verifier
-                              (fn [computed] (constant-time-eq? computed code-challenge)))]
-       (f result)))))
+     ;; `with-code-challenge*` already takes a callback, so the result is
+     ;; threaded straight into `f` — no async-bridge needed. In CLJS this is
+     ;; the promise's then-handler; in CLJ it is a direct call.
+     (internal/with-code-challenge* code-verifier
+       (fn [computed] (f (constant-time-eq? computed code-challenge)))))))
 
 
 ;; ---------------------------------------------------------------------------

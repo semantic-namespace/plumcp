@@ -46,7 +46,8 @@
 
   Minimal wiring:
 
-      (require '[plumcp.core.server.oauth-as :as as]
+      (require '[clojure.data.json :as json]      ; or cheshire, jsonista, ...
+               '[plumcp.core.server.oauth-as :as as]
                '[plumcp.core.server.oauth-as.store :as store]
                '[plumcp.core.server.oauth-as.google-java :as google])
 
@@ -54,13 +55,13 @@
         (as/make-ring-as-options
           {:store        (store/atom-store)     ; use Redis etc. in prod
            :base-url     \"https://mcp.example.com\"
-           :parse-json   u/json-parse
-           :write-json   u/json-write
+           :parse-json   json/read-str        ; any (fn [String]) -> Map
+           :write-json   json/write-str       ; any (fn [Map]) -> String
            :idp          (google/google-provider
                            {:client-id     google-client-id
                             :client-secret (fn [] (secret!))
                             :callback-url  \"https://mcp.example.com/oauth/google/callback\"
-                            :parse-json    u/json-parse})
+                            :parse-json    json/read-str})
            :domain-policy    #(if (str/ends-with? % \"@example.com\") :allow :deny)
            :resolve-identity (fn [email]
                                (if-let [u (find-user-by-email email)]
@@ -81,7 +82,7 @@
    [plumcp.core.server.oauth-as.dcr :as as.dcr]
    [plumcp.core.server.oauth-as.primitive :as as.prim]
    [plumcp.core.server.oauth-as.token :as as.token]
-   [plumcp.core.util :as u]))
+   [plumcp.core.server.oauth-as.internal :as internal]))
 
 
 ;; ---------------------------------------------------------------------------
@@ -263,12 +264,12 @@
            auth-req-ttl client-ttl-seconds provider-label]
     :or   {provider :google}
     :as   options}]
-  (u/expected! store some? "store to be a Store implementation")
-  (u/expected! base-url u/non-empty-string? "base-url to be a non-empty URL string")
-  (u/expected! idp map? "idp to be an identity-provider map")
-  (u/expected! resolve-identity fn? "resolve-identity to be a (fn [email])")
-  (u/expected! parse-json fn? "parse-json to be a (fn [json-string])")
-  (u/expected! write-json fn? "write-json to be a (fn [data])")
+  (internal/expected! store some? "store to be a Store implementation")
+  (internal/expected! base-url internal/non-empty-string? "base-url to be a non-empty URL string")
+  (internal/expected! idp map? "idp to be an identity-provider map")
+  (internal/expected! resolve-identity fn? "resolve-identity to be a (fn [email])")
+  (internal/expected! parse-json fn? "parse-json to be a (fn [json-string])")
+  (internal/expected! write-json fn? "write-json to be a (fn [data])")
   (let [deps     (assoc options :provider provider)
         cb-uri   (or callback-uri (default-callback-uri provider))
         prm-uri  "/.well-known/oauth-protected-resource"

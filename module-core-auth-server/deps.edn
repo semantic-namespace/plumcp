@@ -1,2 +1,7 @@
 {:paths ["resources" "src"]
- :deps {module/core {:local/root "../module-core"}}}
+ ;; No dependencies on purpose. See
+ ;; plumcp.core.server.oauth-as.internal for why this module does not take
+ ;; module/core: a relative :local/root inside a git checkout is unresolvable
+ ;; by older tools.deps versions, which would stop Leiningen-based consumers
+ ;; from using this module as a git dep at all.
+ :deps {}}
