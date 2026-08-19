@@ -90,6 +90,26 @@ MCP client                  this AS                     upstream IdP
     (hrt/wrap-route-match uris {:get-uri-routes (:routes as-options)}))
 ```
 
+### Request requirements
+
+The handlers read OAuth parameters from `:query-params` and `:form-params`, so
+**the AS routes must be wrapped in `ring.middleware.params/wrap-params`** (or an
+equivalent that populates them). plumcp's own Ring transport installs a
+parameters middleware for `/mcp`; if you mount the AS routes outside that stack
+— say on a bare `run-jetty` — wrap them yourself. Symptom if you forget: every
+authorization request reports `Unknown client`, because `client_id` arrives nil.
+
+Wrap only the AS branch, not the MCP endpoint: double-parsing the MCP request
+body will break the JSON-RPC payload.
+
+### Required companion module
+
+`plumcp.core.util` (which this module uses) requires a `plumcp.core.util.json`
+implementation, supplied by one of the `module-core-json-*` modules. Add exactly
+one — same as any other plumcp consumer. This module deliberately does not pick
+one for you; the `:parse-json` / `:write-json` options mean it never calls a JSON
+library directly.
+
 Register **one** redirect URI with your IdP —
 `https<your-base-url>/oauth/google/callback` — regardless of how many MCP
 clients register with the AS.
