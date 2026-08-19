@@ -105,10 +105,16 @@
       (error 400 "invalid_grant" "PKCE verification failed")
 
       :else
+      ;; Carry the whole stored record minus the single-use protocol fields.
+      ;; A fixed whitelist here silently dropped every caller-defined identity
+      ;; key: a `resolve-identity` returning {:org "acme"} had its :org thrown
+      ;; away between the callback and the session, so downstream authorization
+      ;; that keyed on it never applied and the call went through unscoped. The
+      ;; module cannot know which keys a consumer's identity model uses, so it
+      ;; must not enumerate them — it removes what IT owns and keeps the rest.
       (json-response 200
                      (issue-tokens! store
-                                    (select-keys stored
-                                                 [:client-id :resource :user-id :email]))))))
+                                    (dissoc stored :code-challenge :redirect-uri))))))
 
 
 ;; ---------------------------------------------------------------------------

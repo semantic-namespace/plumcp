@@ -365,6 +365,72 @@
       (is (= "invalid_grant" (get (:body resp) "error"))))))
 
 
+(deftest grant-preserves-caller-defined-identity-keys
+  (testing "keys a consumer's resolve-identity returns must survive the
+            authorization_code grant into the session.
+
+            This regressed once and was invisible: the grant used a fixed
+            whitelist (:client-id :resource :user-id :email), so a consumer
+            whose identity model is org-shaped had its :org silently dropped
+            between the callback and the session. Downstream authorization that
+            keyed on :org then never applied and calls went through unscoped.
+
+            The earlier tests missed it because they called issue-tokens!
+            directly, bypassing the grant — the one place that dropped the key.
+            This test goes through token-post on purpose."
+    (let [store (fresh-store)
+          verifier "the-verifier"]
+      (as.store/put! store (as.token/code-key "code-1")
+                     {:client-id      "cid"
+                      :redirect-uri   "https://good.example.com/cb"
+                      :code-challenge (as.prim/code-challenge-for verifier)
+                      :resource       base-url
+                      ;; consumer-defined identity: NOT keys the module knows
+                      :org            "acme"
+                      :tenant-tier    "enterprise"
+                      :user-id        "u1"
+                      :email          "user@example.com"}
+                     90)
+      (let [resp    (as.token/token-post
+                     {:store store}
+                     {"grant_type"    "authorization_code"
+                      "code"          "code-1"
+                      "client_id"     "cid"
+                      "redirect_uri"  "https://good.example.com/cb"
+                      "code_verifier" verifier})
+            session (as.token/session-for
+                     {:store store :base-url base-url}
+                     (str "Bearer " (get (:body resp) "access_token")))]
+        (is (= 200 (:status resp)))
+        (testing "module-known keys survive"
+          (is (= "u1" (:user-id session)))
+          (is (= "user@example.com" (:email session)))
+          (is (= "cid" (:client-id session))))
+        (testing "consumer-defined keys survive too — this is the regression"
+          (is (= "acme" (:org session)))
+          (is (= "enterprise" (:tenant-tier session))))
+        (testing "single-use protocol fields do NOT leak into the session"
+          (is (nil? (:code-challenge session)))
+          (is (nil? (:redirect-uri session))))))))
+
+
+(deftest refresh-preserves-caller-defined-identity-keys
+  (testing "rotation must not quietly narrow the session either"
+    (let [store (fresh-store)
+          issued (as.token/issue-tokens! store {:client-id "cid" :resource base-url
+                                                :org "acme" :user-id "u1"})
+          resp   (as.token/token-post {:store store}
+                                      {"grant_type"    "refresh_token"
+                                       "refresh_token" (get issued "refresh_token")
+                                       "client_id"     "cid"})
+          session (as.token/session-for
+                   {:store store :base-url base-url}
+                   (str "Bearer " (get (:body resp) "access_token")))]
+      (is (= 200 (:status resp)))
+      (is (= "acme" (:org session)))
+      (is (= "u1" (:user-id session))))))
+
+
 (deftest refresh-tokens-rotate-and-cannot-be-replayed
   (let [store   (fresh-store)
         session {:client-id "cid" :resource base-url :user-id "user-1"}
