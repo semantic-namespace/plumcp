@@ -36,13 +36,50 @@
     the binding checks."))
 
 
+(defonce ^:private warned? (volatile! false))
+
+
+(defn- warn-not-durable!
+  "Say once, on the first write, that nothing here survives the process.
+
+  A docstring saying \"not meant for production\" is not enough, because the
+  failure does not look like storage. Every OAuth object lives here — DCR client
+  registrations, authorization codes, access and refresh tokens — so a restart
+  silently invalidates all of them at once. What an operator then sees is a
+  client that completes the whole sign-in flow, receives a token, and is
+  rejected the moment it reconnects: the exact shape of an authorization bug,
+  with no authorization bug present. Discovery documents, audience binding and
+  the 401 challenge all still verify correct, so the search goes everywhere
+  except the store.
+
+  Fires on the first `put!` rather than at construction: that is the moment
+  something exists to lose, and it is still early enough to land in startup
+  logs. Once per process, so it cannot become noise."
+  []
+  (when-not @warned?
+    (vreset! warned? true)
+    (let [msg (str "plumcp oauth-as: using the in-memory atom-store. "
+                   "Every client registration, authorization code, session and "
+                   "refresh token is lost when this process restarts — clients "
+                   "that signed in successfully will be rejected on reconnect. "
+                   "Supply a durable Store implementation for anything but tests "
+                   "and single-process dev.")]
+      #?(:clj  (binding [*out* *err*] (println "WARNING:" msg))
+         :cljs (js/console.warn (str "WARNING: " msg))))))
+
+
 (defn atom-store
   "Trivial in-memory Store useful for tests and single-process dev. TTLs are
   recorded and enforced against System/currentTimeMillis, so an entry that
   passes its expiry returns nil from get* even without eviction. Not meant
-  for production — no cleanup thread, unbounded growth."
-  ([] (atom-store (atom {})))
-  ([backing-atom]
+  for production — no cleanup thread, unbounded growth, and nothing survives a
+  restart (see `warn-not-durable!`).
+
+  `:warn?` false suppresses the first-write warning — for test suites that
+  build many stores and have no interest in being told."
+  ([] (atom-store (atom {}) {}))
+  ([backing-atom] (atom-store backing-atom {}))
+  ([backing-atom {:keys [warn?] :or {warn? true}}]
    (reify Store
      (get* [_ k]
        (let [{:keys [value expires-at]} (get @backing-atom k)]
@@ -52,6 +89,7 @@
                        expires-at))
            value)))
      (put! [_ k v ttl-seconds]
+       (when warn? (warn-not-durable!))
        (swap! backing-atom assoc k
               {:value      v
                :expires-at (+ #?(:clj  (System/currentTimeMillis)

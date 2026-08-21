@@ -32,7 +32,10 @@
 (def base-url "https://mcp.example.com")
 
 
-(defn- fresh-store [] (as.store/atom-store))
+(defn- fresh-store []
+  ;; Warning suppressed: this suite builds a store per test and has already
+  ;; been told. The warning itself is asserted separately, below.
+  (as.store/atom-store (atom {}) {:warn? false}))
 
 
 (defn- register!
@@ -687,3 +690,75 @@
       (is (str/includes? h "resource_metadata="))
       (is (str/includes? h "/.well-known/oauth-protected-resource"))
       (is (str/includes? h "scope=\"mcp\"")))))
+
+
+;; ---------------------------------------------------------------------------
+;; The in-memory store announces itself
+;; ---------------------------------------------------------------------------
+;;
+;; `atom-store` has always said "not for production" in its docstring, and that
+;; was not enough: a deployment ran on it, and every restart silently discarded
+;; all client registrations and tokens. The symptom -- sign-in succeeds, the
+;; very next request is rejected -- reads as an authorization bug, so the search
+;; goes everywhere except the store. These assert the warning is real, fires
+;; where data-loss becomes possible, and cannot become noise.
+
+#?(:clj
+   (defn- capture-warning
+     "Run `f`, returning whatever the store wrote to *err*."
+     [f]
+     (let [w (java.io.StringWriter.)]
+       (binding [*err* w] (f))
+       (str w))))
+
+
+#?(:clj
+   (defn- reset-warned! []
+     ;; The flag is process-wide, so a test must clear it to be independent of
+     ;; whatever ran first.
+     (vreset! @#'as.store/warned? false)))
+
+
+#?(:clj
+   (deftest atom-store-warns-on-first-write
+     (reset-warned!)
+     (let [out (capture-warning
+                #(as.store/put! (as.store/atom-store) ["k"] {:v 1} 60))]
+       (is (str/includes? out "in-memory"))
+       (is (str/includes? out "restart")
+           "the operator needs to know WHEN the data disappears")
+       (is (str/includes? out "rejected on reconnect")
+           "and the symptom, which is what they will actually be searching for"))))
+
+
+#?(:clj
+   (deftest the-warning-is-not-noise
+     (testing "silent until something exists to lose"
+       (reset-warned!)
+       (is (= "" (capture-warning #(as.store/atom-store)))
+           "constructing a store loses nothing; warning here would cry wolf"))
+     (testing "once per process, not once per write"
+       (reset-warned!)
+       (let [store (as.store/atom-store)]
+         (is (seq (capture-warning #(as.store/put! store ["a"] 1 60))))
+         (is (= "" (capture-warning #(as.store/put! store ["b"] 2 60))))
+         (is (= "" (capture-warning #(as.store/put! (as.store/atom-store) ["c"] 3 60)))
+             "a second store must not re-warn either")))))
+
+
+#?(:clj
+   (deftest the-warning-can-be-suppressed
+     (reset-warned!)
+     (let [store (as.store/atom-store (atom {}) {:warn? false})]
+       (is (= "" (capture-warning #(as.store/put! store ["k"] {:v 1} 60)))))))
+
+
+(deftest atom-store-arities-are-backward-compatible
+  ;; The warning added a third arity; the two that existed must be untouched.
+  (let [backing (atom {})]
+    (doseq [store [(as.store/atom-store)
+                   (as.store/atom-store backing)
+                   (as.store/atom-store (atom {}) {:warn? false})]]
+      (as.store/put! store ["k"] {:v 1} 60)
+      (is (= {:v 1} (as.store/get* store ["k"]))))
+    (is (contains? @backing ["k"]) "the supplied atom is still the backing store")))
